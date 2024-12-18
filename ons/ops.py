@@ -6,7 +6,6 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.types import Operator, PropertyGroup
 import gpu
-import bgl
 from gpu_extras.batch import batch_for_shader
 
 import numpy as np
@@ -16,7 +15,7 @@ from mathutils import Vector, Matrix
 # Data (stroring it in the object or scene doesnt work well) #
 # ########################################################## #
 
-shader = gpu.shader.from_builtin('3D_UNIFORM_COLOR')
+shader = gpu.shader.from_builtin('UNIFORM_COLOR')
 frame_data = dict([])
 batches = dict([])
 extern_data = dict([])
@@ -543,18 +542,17 @@ class ANMX_draw_meshes(Operator):
             if f != int(key) and f_dif <= ac.skin_count and not override:
                 shader.bind()
                 shader.uniform_float("color", color)
-                
+
                 # Theres gotta be a better way to do this. Seems super inefficient
                 if not ac.use_flat:
-                    bgl.glEnable(bgl.GL_BLEND)
-                    bgl.glEnable(bgl.GL_CULL_FACE)
+                    gpu.state.blend_set('ALPHA')
+                    gpu.state.face_culling_set('BACK')
                 if not ac.use_xray:
-                    bgl.glEnable(bgl.GL_DEPTH_TEST)
-                
+                    gpu.state.depth_test_set('LESS')
+
                 batches[key].draw(shader)
-                
-                bgl.glDisable(bgl.GL_BLEND)
-                bgl.glDisable(bgl.GL_CULL_FACE)
-                bgl.glDisable(bgl.GL_DEPTH_TEST)
-            
+
+                gpu.state.blend_set('NONE')
+                gpu.state.face_culling_set('NONE')
+                gpu.state.depth_test_set('NONE')
             override = False
