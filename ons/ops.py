@@ -451,23 +451,16 @@ class ANMX_draw_meshes(Operator):
     bl_label = "Draw"
     bl_description = "Draws a set of meshes without creating objects"
     bl_options = {'REGISTER', 'UNDO' }
-    
-    def __init__(self):
-        print("#### __INIT__ DRAW MESHES ####")
-        self.handler = None
-        self.timer = None
-        self.mode = None
-    
-    def __del__(self):
-        """ unregister when done, helps when reopening other scenes """
-        print("#### UNREGISTER HANDLERS ####")
-        self.finish(bpy.context)
-        print("#### HANDLER %s ####" % self.handler)
+
+    def execute(self, context):
+        return {'FINISHED'}
 
     def invoke(self, context, event):
+        self.handler = None
+        self.timer = None
+        self.mode = context.scene.anmx_data.onion_mode
         self.register_handlers(context)
         context.window_manager.modal_handler_add(self)
-        self.mode = context.scene.anmx_data.onion_mode
         return {'RUNNING_MODAL'}
 
     def register_handlers(self, context):
