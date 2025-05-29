@@ -6,6 +6,12 @@ AnimExtras is an addon for Blender that adds ease-of-use for animators using oni
 
 NOTE OF THIS FORK: UPDATED FOR 2025 - NOW WORKING ON BLENDER 4.4.3!!!
 
+Remember, this addon calculates the skinning for all frames in the playback range that you have in Blender, to change that you'll have to set your start and end in the Timeline Editor.
+
+This add-on doesn't auto update with changes in animation yet, adapt your workflow so you update your onion skin everytime you make a change.
+
+Happy Animating!
+
 !['Preview'](https://raw.githubusercontent.com/wiki/schroef/animextras/images/anmx-v112.jpg?2021-04-21.2)
 
 ## Features

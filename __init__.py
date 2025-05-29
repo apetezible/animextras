@@ -25,7 +25,7 @@
 bl_info = {
     "name": "AnimExtras",
     "author": "Andrew Combs, Rombout Versluijs, Sebastian Sarmiento",
-    "version": (1, 1, 5),
+    "version": (1, 1, 6),
     "blender": (4, 4, 3),
     "description": "True onion skinning",
     "category": "Animation",
