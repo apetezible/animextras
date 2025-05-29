@@ -316,7 +316,38 @@ class ANMX_update_onion(Operator):
             return {'CANCELLED'}
 
         # Update the onion skinning data for the group
+        # Save current mode and selection
+        prev_mode = context.mode
+        prev_selected = [obj for obj in context.selected_objects]
+        prev_active = context.view_layer.objects.active
+
+        # Switch to Object mode
+        if prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Select all objects in the onion group
+        anmx = context.scene.anmx_data
+        group_objs = anmx.get_onion_group()
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in group_objs:
+            obj.select_set(True)
+        if group_objs:
+            context.view_layer.objects.active = group_objs[0]
+
+        # Run the update logic
         set_to_active()
+
+        # Restore previous selection
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in prev_selected:
+            obj.select_set(True)
+        if prev_active:
+            context.view_layer.objects.active = prev_active
+
+        # Restore previous mode
+        if prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode=prev_mode)
+
         return {"FINISHED"}
 
 # Uses a list formatted in the following way to draw the meshes:
