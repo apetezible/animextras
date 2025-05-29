@@ -7,6 +7,7 @@ from bpy.app.handlers import persistent
 from bpy.types import Operator, PropertyGroup
 import gpu
 from gpu_extras.batch import batch_for_shader
+import bmesh
 
 import numpy as np
 from mathutils import Vector, Matrix
@@ -176,7 +177,12 @@ def make_batches():
     # Custom OSL shader could be set here
     scn = bpy.context.scene
     anmx = scn.anmx_data
-    _obj = bpy.data.objects[anmx.onion_object]
+    group_objs = anmx.get_onion_group()
+    if not group_objs:
+        return
+    
+    _obj = join_meshes(group_objs)
+    
     
     
     for key in frame_data:
@@ -185,66 +191,62 @@ def make_batches():
         indices = arg[1]
         batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
         batches[key] = batch
+
+    bpy.data.objects.remove(_obj)
+
+    
         
 
 def bake_frames():
-    # Needs to do the following:
-    # 1. Bake the data for every frame and store it in the objects "["frame_data"]" items
     scn = bpy.context.scene
     anmx = scn.anmx_data
-    _obj = bpy.data.objects[anmx.onion_object]
-    
+
+    group_objs = anmx.get_onion_group()
+    if not group_objs:
+        return
+
     curr = scn.frame_current
     step = anmx.skin_step
-    
-    # Getting the first and last frame of the animation
-    keyobj = _obj
-    
-    if _obj.parent is not None:
-        keyobj = _obj.parent
-    # Check if obj is linked rig
-    elif hasattr(_obj.instance_collection, "all_objects"):
-        keyobj = _obj.instance_collection.all_objects[_obj.name]
-        # print(keyobj)
-        # keyobj = _obj.parent
 
+    # Collect all keyframes from all group objects
     keyframes = []
-    for fc in keyobj.animation_data.action.fcurves:
-        for k in fc.keyframe_points:
-            keyframes.append(int(k.co[0]))
-            
+    for obj in group_objs:
+        if obj.animation_data and obj.animation_data.action:
+            for fc in obj.animation_data.action.fcurves:
+                for k in fc.keyframe_points:
+                    keyframes.append(int(k.co[0]))
     keyframes = np.unique(keyframes)
+    if len(keyframes) == 0:
+        return
 
     start = int(np.min(keyframes))
     end = int(np.max(keyframes)) + 1
-    
+
+    frame_data.clear()
+    extern_data.clear()
+
     if anmx.onion_mode == "PF":
-        for f in range(start, end):
-            arg = frame_get_set(_obj, f)
-            frame_data[str(f)] = arg
-        extern_data.clear()
-        
+        frames = range(start, end)
     elif anmx.onion_mode == "PFS":
-        for f in range(start, end, step):
-            arg = frame_get_set(_obj, f)
-            frame_data[str(f)] = arg
-        extern_data.clear()
-        
+        frames = range(start, end, step)
     elif anmx.onion_mode == "DC":
-        for fkey in keyframes:
-            arg = frame_get_set(_obj, fkey)
-            frame_data[str(fkey)] = arg
-        extern_data.clear()
-        
+        frames = keyframes
     elif anmx.onion_mode == "INB":
-        for f in range(start, end):
-            arg = frame_get_set(_obj, f)
-            frame_data[str(f)] = arg
+        frames = range(start, end)
+    else:
+        frames = []
 
+    for f in frames:
+        scn.frame_set(f)
+        _obj = join_meshes(group_objs)
+        arg = frame_get_set(_obj, f)
+        frame_data[str(f)] = arg
+        bpy.data.objects.remove(_obj)
+
+    if anmx.onion_mode == "INB":
         extern_data.clear()
-        for fkey in keyframes: 
+        for fkey in keyframes:
             extern_data[str(fkey)] = fkey
-
 
     scn.frame_set(curr)
     
@@ -304,6 +306,12 @@ class ANMX_data(PropertyGroup):
     future_opacity_end: bpy.props.FloatProperty(name="Ending Opacity", min=0, max=1,precision=2, default=0.1)
     future_enabled: bpy.props.BoolProperty(name="Enabled?", default=True)
 
+    
+    onion_group: bpy.props.CollectionProperty(type=bpy.types.PropertyGroup)
+    # Helper to get the list of objects
+    def get_onion_group(self):
+        return [bpy.data.objects[item.name] for item in self.onion_group if item.name in bpy.data.objects]
+
 
 # ################ #
 # Operators        #
@@ -322,75 +330,30 @@ def check_selected(context):
 
 class ANMX_set_onion(Operator):
     bl_idname = "anim_extras.set_onion"
-    bl_label = "Set Onion To Selected"    
-    bl_description = "Sets the selected object to be the onion object"
-    bl_options = {'REGISTER', 'UNDO' }
-    
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        if context.selected_objects != []:
-            if (hasattr(obj.parent,"animation_data") and (obj.type == 'MESH')):
-                if (hasattr(obj.parent.animation_data,"action")):
-                    return True
-            if hasattr(obj.animation_data,"action"):
-                if hasattr(obj.animation_data.action,"fcurves"):
-                    return ((obj.type == 'MESH') and hasattr(obj.animation_data,"action") or (obj.type=='EMPTY'))
-            if hasattr(obj.instance_collection, "all_objects"):
-                return True
-    
+    bl_label = "Set Onion Group"
+    bl_description = "Set selected mesh objects as the onion skin group"
+
     def execute(self, context):
-        obj = context.active_object
-        scn = context.scene
-        anmx = scn.anmx_data
-
-        #Extra check for the shortcuts
-        if not check_selected(context):
-            self.report({'INFO'}, "Onion needs animated active selection ")
-            return {'CANCELLED'}  
-
-        anmx.toggle = False if anmx.toggle else True
-
-        if obj == None:
-            return {"CANCELLED"}
-        
-        if obj.parent is None:
-            try:
-                obj.animation_data.action.fcurves
-            except AttributeError:
-                pass
-                # return {"CANCELLED"}
-        else:
-            try:
-                # This right here needs to change for allowing linked rigs
-                # obj.parent.animation_data.action.fcurves
-                dObj = bpy.data.objects[obj.name]
-                hasattr(dObj.instance_collection, "all_objects")
-            except AttributeError:
-                return {"CANCELLED"}
-        
-        # Or check if it is linked empty
-        if ((obj.type == 'MESH') or (obj.type=='EMPTY')):
-            set_to_active(obj)
-    
-        return {"FINISHED"}
-
+        access = context.scene.anmx_data
+        access.onion_group.clear()
+        for obj in context.selected_objects:
+            if obj.type == 'MESH':
+                item = access.onion_group.add()
+                item.name = obj.name
+        if not access.onion_group:
+            self.report({'WARNING'}, "No valid mesh objects selected.")
+            return {'CANCELLED'}
+        return {'FINISHED'}
 
 class ANMX_clear_onion(Operator):
     bl_idname = "anim_extras.clear_onion"
-    bl_label = "Clear Selected Onion"
-    bl_description = "Clears the path of the onion object"
-    bl_options = {'REGISTER', 'UNDO' }
-   
+    bl_label = "Clear Onion Group"
+    bl_description = "Clear the current onion skin group"
+
     def execute(self, context):
-        #Extra check for the shortcuts
-        if not check_selected(context):
-            self.report({'INFO'}, "Onion needs animated active selection")
-            return {'CANCELLED'}
-
-        clear_active(clrRig=True)
-
-        return {"FINISHED"}
+        access = context.scene.anmx_data
+        access.onion_group.clear()
+        return {'FINISHED'}
     
 class ANMX_toggle_onion(Operator):
     """ Operator for toggling the onion object so we can shortcut it"""
@@ -549,3 +512,27 @@ class ANMX_draw_meshes(Operator):
                 gpu.state.face_culling_set('NONE')
                 gpu.state.depth_test_set('NONE')
             override = False
+
+def join_meshes(objs, name="OnionGroupTemp"):
+
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+
+    for obj in objs:
+        if obj.type != 'MESH':
+            continue
+        eval_obj = obj.evaluated_get(depsgraph)
+        temp_mesh = eval_obj.to_mesh()
+        temp_mesh.transform(obj.matrix_world)
+        bmesh_temp = bmesh.new()
+        bmesh_temp.from_mesh(temp_mesh)
+        bm.from_mesh(temp_mesh)
+        bmesh_temp.free()
+        eval_obj.to_mesh_clear()  # <-- This is the correct cleanup!
+
+    bm.to_mesh(mesh)
+    bm.free()
+    temp_obj = bpy.data.objects.new(name, mesh)
+    print("Joining %s objects into %s" % (len(objs), name))
+    return temp_obj

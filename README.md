@@ -12,6 +12,7 @@ NOTE OF THIS FORK: UPDATED FOR 2025 - NOW WORKING ON BLENDER 4.4.3!!!
 
 * Dedicated panel
 * Easy clear / update skinning
+* Added support for multiple meshes, helpfull for animating proxy rigs.
 * 4 preview modes
   * Per-Frame
   * Per-Frame Stepped

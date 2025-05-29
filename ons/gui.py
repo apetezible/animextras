@@ -18,13 +18,22 @@ class ANMX_gui(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         access = context.scene.anmx_data
-        # obj = context.object
-        obj = context.active_object
 
-        # Makes UI split like 2.8 no split factor 0.3 needed
         layout.use_property_split = True
         layout.use_property_decorate = False
-        
+
+        # Show onion group or prompt to set
+        if not access.onion_group:
+            layout.operator("anim_extras.set_onion", text="Set Onion Group")
+            layout.label(text="Select mesh objects and click 'Set Onion Group'", icon='INFO')
+            return
+
+        # Show current group
+        box = layout.box()
+        box.label(text="Onion Group:")
+        for item in access.onion_group:
+            box.label(text=item.name, icon='OUTLINER_OB_MESH')
+
         # Makes sure the user can't do any operations when the onion object doesn't exist
         if access.onion_object not in bpy.data.objects:
             layout.operator("anim_extras.set_onion")
@@ -106,4 +115,3 @@ class ANMX_gui(bpy.types.Panel):
             text = "Stop Drawing"
         icoOni = 'ONIONSKIN_OFF' if access.toggle else 'ONIONSKIN_ON'
         layout.prop(access, "toggle", text=text, toggle=True, icon=icoOni)
-        
