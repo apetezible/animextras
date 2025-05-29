@@ -310,11 +310,6 @@ class ANMX_update_onion(Operator):
     bl_options = {'REGISTER', 'UNDO' }
     
     def execute(self, context):
-        # Extra check for the shortcuts
-        if not check_selected(context):
-            self.report({'INFO'}, "Onion needs active selection")
-            return {'CANCELLED'}
-
         # Update the onion skinning data for the group
         # Save current mode and selection
         prev_mode = context.mode
