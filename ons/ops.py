@@ -27,150 +27,64 @@ extern_data = dict([])
 
 def frame_get_set(_obj, frame):
     scn = bpy.context.scene
-    anmx = scn.anmx_data
 
-    # Show from viewport > keep off this allows in_front to work
-    # if "_animextras" in scn.collection.children:
-    #     vlayer = scn.view_layers['View Layer']
-    #     vlayer.layer_collection.children['_animextras'].hide_viewport = False
-
-    if _obj.type == 'EMPTY':
-        if anmx.is_linked:
-            bpy.ops.object.duplicate_move_linked(OBJECT_OT_duplicate={"linked":True})
-            # Hide original but keep it able to render
-            _obj.hide_viewport = True
-            if "_animextras" in scn.collection.children:
-                bpy.data.collections['_animextras'].objects.link(bpy.data.objects[anmx.onion_object])
-            # bpy.ops.object.move_to_collection(collection_index=0, is_new=True, new_collection_name="_animextras")
-
-        _obj = bpy.context.active_object
-        if not "_animextras" in scn.collection.children:
-            bpy.ops.object.move_to_collection(collection_index=0, is_new=True, new_collection_name="_animextras")
-            # bpy.data.collections['_animextras'].hide_viewport = True
-            # bpy.data.scenes["Scene"].view_layers[0].layer_collection.collection.children["_animextras"].hide_viewport = False
-            bpy.data.collections['_animextras'].hide_render = True
-            _obj = bpy.context.selected_objects[0]
-        
-        # print("_obj %s" % _obj)
-        if anmx.is_linked:
-            bpy.ops.object.make_override_library()
-            for i in bpy.data.collections['_animextras'].children[0].objects:
-                if i.type == 'MESH':
-                    new_onion = i.name
-                    i.hide_render = True
-
-            scn.anmx_data.onion_object = new_onion
-            anmx.is_linked = False
-
-        # Return duplicated linked rig made local     
-        _obj =  bpy.data.objects[anmx.onion_object]
-        
-        # Make object active so panel shows
-        bpy.context.view_layer.objects.active = _obj
-        # Select active
-        # bpy.context.scene.objects["Body"].select_set(True)
-       
-	# Gets all of the data from a mesh on a certain frame
-    tmpobj = _obj
-
-    # Setting the frame to get an accurate reading of the object on the selected frame
-    scn = bpy.context.scene
+    # Set the frame to get the correct geometry
     scn.frame_set(frame)
 
-    # Getting the Depenency Graph and the evaluated object
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    eval = tmpobj.evaluated_get(depsgraph)
-
-    # Making a new mesh from the object.
+    eval = _obj.evaluated_get(depsgraph)
     mesh = eval.to_mesh()
     mesh.update()
-    
-    # Getting the object's world matrix
+
     mat = Matrix(_obj.matrix_world)
-    
-    # This moves the mesh by the object's world matrix, thus making everything global space. This is much faster than getting each vertex individually and doing a matrix multiplication on it
     mesh.transform(mat)
     mesh.update()
-    
-    # loop triangles are needed to properly draw the mesh on screen
     mesh.calc_loop_triangles()
     mesh.update()
-    
-    # Creating empties so that all of the verts and indices can be gathered all at once in the next step
+
     vertices = np.empty((len(mesh.vertices), 3), 'f')
     indices = np.empty((len(mesh.loop_triangles), 3), 'i')
-    
-    # Getting all of the vertices and incices all at once (from: https://docs.blender.org/api/current/gpu.html#mesh-with-random-vertex-colors)
-    mesh.vertices.foreach_get(
-        "co", np.reshape(vertices, len(mesh.vertices) * 3))
-    mesh.loop_triangles.foreach_get(
-        "vertices", np.reshape(indices, len(mesh.loop_triangles) * 3))
-    
+
+    mesh.vertices.foreach_get("co", np.reshape(vertices, len(mesh.vertices) * 3))
+    mesh.loop_triangles.foreach_get("vertices", np.reshape(indices, len(mesh.loop_triangles) * 3))
+
     args = [vertices, indices]
-    
-    # Hide from viewport > keep off this allows in_front to work
-    # if "_animextras" in scn.collection.children:
-    #     vlayer = scn.view_layers['View Layer']
-    #     vlayer.layer_collection.children['_animextras'].hide_viewport = True
 
     return args
 
 
-def set_to_active(_obj):
-    """ Sets the object that is being used for the onion skinning """
+def set_to_active():
+    """ Sets the onion skinning group as the active source for baking/drawing """
     scn = bpy.context.scene
     anmx = scn.anmx_data
-    
-    # Clear all data > caused double drawing with mode switch
-    # Old clear method caused issues when using a rig
-    # Still see handler issue
+
+    # Clear all data
     frame_data.clear()
     batches.clear()
     extern_data.clear()
 
-    # skip clear if we are linked
-    if hasattr(anmx,"link_parent"):
-        if not anmx.link_parent == "":
-            clear_active(clrRig=False)
+    group_objs = anmx.get_onion_group()
+    if not group_objs:
+        return
 
-    anmx.onion_object = _obj.name
-    anmx.is_linked = True if _obj.type == 'EMPTY' else False
-    
-    if anmx.is_linked:
-        if hasattr(anmx,"link_parent"):
-            if not anmx.link_parent:
-                anmx.link_parent = _obj.name
 
+    # Bake and batch using the joined mesh
     bake_frames()
     make_batches()
 
 
 def clear_active(clrRig):
-    """ clrRig will do complete clear, sued with linked Rigs, allows to update it without deleting everuthing """
-    """ Clears the active object """ 
+    """ Clears all onion skinning data and the onion group """
 
-    scn = bpy.context.scene
-    anmx = scn.anmx_data
-    name = anmx.onion_object
-    
-    # Clears all the data needed to store onion skins on the previously selected object
+    # Clear all the data needed to store onion skins
     frame_data.clear()
     batches.clear()
     extern_data.clear()
-    
-    # Clear localzed rigs & overrides linked items
-    if clrRig:
-        if hasattr(anmx,"link_parent"):
-            if not anmx.link_parent == "":
-                bpy.data.collections["_animextras"].children[0].objects.unlink(bpy.data.objects[name])
-                bpy.data.collections.remove(bpy.data.collections[anmx.link_parent])
-                bpy.data.collections.remove(bpy.data.collections["_animextras"])
-                # Show original linked rig again
-                bpy.data.objects[anmx.link_parent].hide_viewport = False
-                anmx.link_parent = ""
 
-    # Gets rid of the selected object
-    anmx.onion_object = ""
+    # Clear the onion group
+    scn = bpy.context.scene
+    anmx = scn.anmx_data
+    anmx.onion_group.clear()
 
 
 def make_batches():
@@ -263,14 +177,17 @@ class ANMX_data(PropertyGroup):
             bpy.ops.anim_extras.draw_meshes('INVOKE_DEFAULT')
         return
 
-    def inFront(self,context):
+    def inFront(self, context):
         scn = bpy.context.scene
-        if self.onion_object:
-            obj = bpy.context.view_layer.objects.active = bpy.data.objects[self.onion_object]
-            obj.show_in_front = True if scn["anmx_data"]["in_front"] else False
-            if "use_xray" in scn["anmx_data"]:
-                if scn["anmx_data"]["use_xray"]:
-                    scn["anmx_data"]["use_xray"] = False if scn["anmx_data"]["in_front"] else True
+        # Set show_in_front for all objects in the onion group
+        for item in self.onion_group:
+            obj = bpy.data.objects.get(item.name)
+            if obj:
+                obj.show_in_front = self.in_front
+        # Optionally, handle use_xray logic if needed
+        if "use_xray" in scn["anmx_data"]:
+            if scn["anmx_data"]["use_xray"]:
+                scn["anmx_data"]["use_xray"] = False if scn["anmx_data"]["in_front"] else True
         return
 
     modes = [
@@ -283,7 +200,7 @@ class ANMX_data(PropertyGroup):
     # Onion Skinning Properties
     skin_count: bpy.props.IntProperty(name="Count", description="Number of frames we see in past and future", default=1, min=1)
     skin_step: bpy.props.IntProperty(name="Step", description="Number of frames to skip in conjuction with Count", default=1, min=1)
-    onion_object: bpy.props.StringProperty(name="Onion Object", default="")
+    onion_group: bpy.props.CollectionProperty(name="Onion Group", default="")
     onion_mode: bpy.props.EnumProperty(name="", get=None, set=None, items=modes)
     use_xray: bpy.props.BoolProperty(name="Use X-Ray", description="Draws the onion visible through the object", default=False)
     use_flat: bpy.props.BoolProperty(name="Flat Colors", description="Colors while not use opacity showing 100% of the color", default=False)
@@ -318,15 +235,7 @@ class ANMX_data(PropertyGroup):
 # ################ #
 
 def check_selected(context):
-    obj = context.active_object
-    return context.selected_objects != []
-        # return True
-        # Need workaround so we can pose and still do updates
-        # return ((obj.type == 'MESH') and hasattr(obj.animation_data,"action") or (obj.type=='EMPTY') or (obj.type == 'MESH') and hasattr(obj.parent.animation_data,"action"))
-    #     if ((obj.type == 'MESH') and hasattr(obj.animation_data,"action") or (obj.type=='EMPTY')):
-    #         return True
-    # else:
-    #     return False
+    return any(obj.type == 'MESH' for obj in context.selected_objects)
 
 class ANMX_set_onion(Operator):
     bl_idname = "anim_extras.set_onion"
@@ -343,6 +252,7 @@ class ANMX_set_onion(Operator):
         if not access.onion_group:
             self.report({'WARNING'}, "No valid mesh objects selected.")
             return {'CANCELLED'}
+        print("Onion group set with %d objects." % len(access.onion_group))
         return {'FINISHED'}
 
 class ANMX_clear_onion(Operator):
@@ -372,16 +282,17 @@ class ANMX_add_clear_onion(Operator):
     bl_idname = "anim_extras.add_clear_onion"
     bl_label = "Add/Toggle Onion"
     bl_description = "Add/Toggles onion ON/OFF"
-    bl_options = {'REGISTER', 'UNDO' }
-    
+    bl_options = {'REGISTER', 'UNDO'}
+
     def execute(self, context):
-        #Extra check for the shortcuts
+        # Extra check for the shortcuts
         if not check_selected(context):
             self.report({'INFO'}, "Onion needs animated active selection")
             return {'CANCELLED'}
 
         anmx = context.scene.anmx_data
-        if anmx.onion_object=="":
+        # Check if the onion group is empty
+        if not anmx.onion_group or len(anmx.onion_group) == 0:
             bpy.ops.anim_extras.set_onion()
         else:
             bpy.ops.anim_extras.clear_onion()
@@ -391,20 +302,18 @@ class ANMX_add_clear_onion(Operator):
 
 class ANMX_update_onion(Operator):
     bl_idname = "anim_extras.update_onion"
-    bl_label = "Update Selected Onion"
-    bl_description = "Updates the path of the onion object"
+    bl_label = "Update Onion Group"
+    bl_description = "Updates the onion skinning data for the current group"
     bl_options = {'REGISTER', 'UNDO' }
     
     def execute(self, context):
-        #Extra check for the shortcuts
+        # Extra check for the shortcuts
         if not check_selected(context):
             self.report({'INFO'}, "Onion needs active selection")
             return {'CANCELLED'}
 
-        # This allows to update, also pose mode
-        if context.scene.anmx_data.onion_object in bpy.data.objects:
-            set_to_active(bpy.data.objects[context.scene.anmx_data.onion_object])
-    
+        # Update the onion skinning data for the group
+        set_to_active()
         return {"FINISHED"}
 
 # Uses a list formatted in the following way to draw the meshes:
@@ -438,11 +347,13 @@ class ANMX_draw_meshes(Operator):
         self.handler = None
 
     def modal(self, context, event):
-        if context.scene.anmx_data.onion_object not in bpy.data.objects:
+        anmx = context.scene.anmx_data
+        # Cancel if the onion group is empty
+        if not anmx.onion_group or len(anmx.onion_group) == 0:
             self.unregister_handlers(context)
             return {'CANCELLED'}
 
-        if context.scene.anmx_data.toggle is False or self.mode != context.scene.anmx_data.onion_mode:
+        if anmx.toggle is False or self.mode != anmx.onion_mode:
             self.unregister_handlers(context)
             return {'CANCELLED'}
         
