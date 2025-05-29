@@ -122,19 +122,9 @@ def bake_frames():
     curr = scn.frame_current
     step = anmx.skin_step
 
-    # Collect all keyframes from all group objects
-    keyframes = []
-    for obj in group_objs:
-        if obj.animation_data and obj.animation_data.action:
-            for fc in obj.animation_data.action.fcurves:
-                for k in fc.keyframe_points:
-                    keyframes.append(int(k.co[0]))
-    keyframes = np.unique(keyframes)
-    if len(keyframes) == 0:
-        return
-
-    start = int(np.min(keyframes))
-    end = int(np.max(keyframes)) + 1
+    # Use the scene's frame range
+    start = scn.frame_start
+    end = scn.frame_end + 1
 
     frame_data.clear()
     extern_data.clear()
@@ -144,7 +134,22 @@ def bake_frames():
     elif anmx.onion_mode == "PFS":
         frames = range(start, end, step)
     elif anmx.onion_mode == "DC":
-        frames = keyframes
+        # Optionally, collect keyframes from all objects and their armatures
+        frames = set()
+        for obj in group_objs:
+            # Mesh keyframes
+            if obj.animation_data and obj.animation_data.action:
+                for fc in obj.animation_data.action.fcurves:
+                    for k in fc.keyframe_points:
+                        frames.add(int(k.co[0]))
+            # Armature keyframes
+            if obj.parent and obj.parent.type == 'ARMATURE':
+                arm = obj.parent
+                if arm.animation_data and arm.animation_data.action:
+                    for fc in arm.animation_data.action.fcurves:
+                        for k in fc.keyframe_points:
+                            frames.add(int(k.co[0]))
+        frames = sorted(frames) if frames else range(start, end)
     elif anmx.onion_mode == "INB":
         frames = range(start, end)
     else:
@@ -156,11 +161,6 @@ def bake_frames():
         arg = frame_get_set(_obj, f)
         frame_data[str(f)] = arg
         bpy.data.objects.remove(_obj)
-
-    if anmx.onion_mode == "INB":
-        extern_data.clear()
-        for fkey in keyframes:
-            extern_data[str(fkey)] = fkey
 
     scn.frame_set(curr)
     
@@ -197,19 +197,16 @@ class ANMX_data(PropertyGroup):
         ("INB", "Inbetweening", " Inbetweening, lets you see frames with direct keyframes in a different color than interpolated frames", 4)
         ]
 
+
     # Onion Skinning Properties
     skin_count: bpy.props.IntProperty(name="Count", description="Number of frames we see in past and future", default=1, min=1)
     skin_step: bpy.props.IntProperty(name="Step", description="Number of frames to skip in conjuction with Count", default=1, min=1)
-    onion_group: bpy.props.CollectionProperty(name="Onion Group", default="")
     onion_mode: bpy.props.EnumProperty(name="", get=None, set=None, items=modes)
     use_xray: bpy.props.BoolProperty(name="Use X-Ray", description="Draws the onion visible through the object", default=False)
     use_flat: bpy.props.BoolProperty(name="Flat Colors", description="Colors while not use opacity showing 100% of the color", default=False)
     in_front: bpy.props.BoolProperty(name="In Front", description="Draws the selected object in front of the onion skinning", default=False, update=inFront)
     toggle: bpy.props.BoolProperty(name="Draw", description="Toggles onion skinning on or off", default=False, update=toggle_update)
     
-    # Linked settings
-    is_linked: bpy.props.BoolProperty(name="Is linked", default=False)
-    link_parent: bpy.props.StringProperty(name="Link Parent", default="")
 
     # Past settings
     past_color: bpy.props.FloatVectorProperty(name="Past Color", min=0, max=1, size=3, default=(1., .1, .1), subtype='COLOR')
@@ -245,6 +242,12 @@ class ANMX_set_onion(Operator):
     def execute(self, context):
         access = context.scene.anmx_data
         access.onion_group.clear()
+        # Track overrides for cleanup
+        if not hasattr(access, "onion_overrides"):
+            access.onion_overrides = []
+        else:
+            access.onion_overrides.clear()
+
         for obj in context.selected_objects:
             if obj.type == 'MESH':
                 item = access.onion_group.add()
@@ -425,7 +428,6 @@ class ANMX_draw_meshes(Operator):
             override = False
 
 def join_meshes(objs, name="OnionGroupTemp"):
-
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
     depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -440,10 +442,13 @@ def join_meshes(objs, name="OnionGroupTemp"):
         bmesh_temp.from_mesh(temp_mesh)
         bm.from_mesh(temp_mesh)
         bmesh_temp.free()
-        eval_obj.to_mesh_clear()  # <-- This is the correct cleanup!
+        eval_obj.to_mesh_clear()
 
     bm.to_mesh(mesh)
     bm.free()
     temp_obj = bpy.data.objects.new(name, mesh)
     print("Joining %s objects into %s" % (len(objs), name))
     return temp_obj
+
+
+
